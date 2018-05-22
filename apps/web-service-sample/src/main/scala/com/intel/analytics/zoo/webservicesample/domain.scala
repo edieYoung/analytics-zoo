@@ -15,14 +15,12 @@ import java.io.BufferedInputStream
 import java.io.ObjectInputStream
 import com.intel.analytics.bigdl.nn.abstractnn.AbstractModule
 
-object Paths {
-  val IMAGE_CLASSIFICATION_IMAGENET_ALEXNET = "https://s3-ap-southeast-1.amazonaws.com/analytics-zoo-models/imageclassification/imagenet/analytics-zoo_alexnet_imagenet_0.1.0"
-}
-
-case class Models(implicit val system: ActorSystem, implicit val executor: ExecutionContextExecutor, implicit val materializer: Materializer) extends Supportive with HttpClientAble {
+case class Models(modelHome: String) extends Supportive {
   override val logger = LoggerFactory.getLogger(getClass)
+  
+  val PATH_IMAGE_CLASSIFICATION_IMAGENET_ALEXNET = s"$modelHome/imageclassification/imagenet/analytics-zoo_alexnet_imagenet_0.1.0"
 
-  val IMAGE_CLASSIFICATION_IMAGENET_MODEL_ALEXNET = timing("loadModelAndCreatePredictor for alexnet")(loadModelFromHttp(Paths.IMAGE_CLASSIFICATION_IMAGENET_ALEXNET))
+  val MODEL_IMAGE_CLASSIFICATION_IMAGENET_ALEXNET = timing("loadModelAndCreatePredictor for alexnet")(loadModelAndCreatePredictor(PATH_IMAGE_CLASSIFICATION_IMAGENET_ALEXNET))
 
   def loadModelAndCreatePredictor[T](path: String) = {
     logger.info(s"load model from $path")
@@ -31,23 +29,6 @@ case class Models(implicit val system: ActorSystem, implicit val executor: Execu
     val localPredictor = LocalPredictor(model)
     logger.info(s"created localPredictor as $localPredictor")
     localPredictor
-  }
-
-  def loadModelFromHttp[T](uri: String) = {
-    val request = HttpRequest(method = HttpMethods.GET, uri = Uri(uri))
-    val model = process(request) match {
-      case Some(bytes) => {
-        val inputStream = new ByteArrayInputStream(bytes)
-        val bufferedInputStream = new BufferedInputStream(inputStream)
-        val objectInputStream = new ObjectInputStream(bufferedInputStream)
-        val module = objectInputStream.readObject().asInstanceOf[AbstractModule[Activity, Activity, T]]
-        val model = module.asInstanceOf[ZooModel[Activity, Activity, T]]
-        logger.info(s"model loaded as $model")
-        Some(model)
-      }
-      case None => None
-    }
-
   }
 }
 

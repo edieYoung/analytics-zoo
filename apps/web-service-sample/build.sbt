@@ -6,6 +6,8 @@ scalaVersion := "2.11.8"
 
 resolvers += "ossrh repository" at "https://oss.sonatype.org/content/repositories/snapshots/"
 
+resolvers += "bintray-sbt-plugins" at "http://dl.bintray.com/sbt/sbt-plugin-releases/"
+
 libraryDependencies ++= Seq(
     "com.typesafe.akka"         %%  "akka-slf4j"                % "2.5.12",
     "com.typesafe.akka"         %%  "akka-stream"               % "2.5.12",
@@ -15,6 +17,9 @@ libraryDependencies ++= Seq(
     "org.apache.spark"          %%  "spark-core"                % "2.2.0" withSources(),
     "org.apache.spark"          %%  "spark-mllib"               % "2.2.0" withSources(),
     "org.apache.spark"          %%  "spark-sql"                 % "2.2.0" withSources(),
+    "org.apache.hadoop"         %   "hadoop-common"             % "2.7.3" withSources(),
+    "org.apache.hadoop"         %   "hadoop-aws"                % "2.7.3" withSources(),
+    "org.apache.hadoop"         %   "hadoop-client"             % "2.7.3" withSources(),
     "com.intel.analytics.zoo"   %   "analytics-zoo-SPARK_2.2"   % "0.1.0-SNAPSHOT" withSources() 
     )
 

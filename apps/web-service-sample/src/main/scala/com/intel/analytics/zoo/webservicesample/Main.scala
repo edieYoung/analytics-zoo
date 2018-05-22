@@ -7,7 +7,7 @@ import akka.http.scaladsl.Http
 import akka.http.scaladsl.server.Directives._
 
 //to package:     sbt assembly
-//to run in sbt:  sbt run
+//to run in sbt:  sbt run -Dmodel.home="C:\Users\dongjies\Desktop\analytics-zoo-models"
 //to run in jar:  java -jar /...jar
 object Main extends App with HttpServerAble {
   override val logger = LoggerFactory.getLogger(getClass)
@@ -16,6 +16,7 @@ object Main extends App with HttpServerAble {
   val actorSystemName = s"${name}-actor-system"
   val interface = "0.0.0.0"
   val httpPort = 10080
+  val modelHome = System.getProperties.getProperty("model.home")
 
   override implicit val system = ActorSystem(actorSystemName)
   override implicit val executor = system.dispatcher
@@ -28,8 +29,8 @@ object Main extends App with HttpServerAble {
     (post & path("imageclassification" / "predict") & extract(_.request.entity.contentType) & entity(as[String])) { (contentType, content) =>
       complete(content)
     }
-    
-  val models = Models()
+  
+  val models = Models(modelHome)
   logger.info(s"all models successfully loaded.")
   
   Http().bindAndHandle(route, interface, httpPort)
