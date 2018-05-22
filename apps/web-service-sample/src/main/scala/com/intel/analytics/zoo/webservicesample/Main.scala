@@ -7,7 +7,7 @@ import akka.http.scaladsl.Http
 import akka.http.scaladsl.server.Directives._
 
 //to package:     sbt assembly
-//to run in sbt:  sbt run -Dmodel.home="C:\Users\dongjies\Desktop\analytics-zoo-models"
+//to run in sbt:  sbt run -Dmodel.home="~/glorysdj/analytics-zoo-models"
 //to run in jar:  java -jar /...jar
 object Main extends App with HttpServerAble {
   override val logger = LoggerFactory.getLogger(getClass)
