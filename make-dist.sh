@@ -17,30 +17,18 @@
 #
 
 #
-# Create a folder contain all files for dist
+# Create a folder that contains all files for dist
 #
 
 set -e
 
 BASEDIR=$(dirname "$0")
 
-# Check bigdl backend
-if [ ! -d $BASEDIR/backend/bigdl ]; then
-   echo "Backend is not exist. Please try to execute: git submodule update --init --recursive"
-   exit 1
-fi
-
-# Check spark conf
-if [ ! -f $BASEDIR/backend/bigdl/spark/dl/src/main/resources/spark-bigdl.conf ]; then
-   echo "Conf is not exist. Please check: $BASEDIR/backend/bigdl/spark/dl/src/main/resources/spark-bigdl.conf"
-   exit 1
-fi
-
 # Check java
 if type -p java>/dev/null; then
     _java=java
 else
-    echo "Java is not installed"
+    echo "Java is not installed. Exit"
     exit 1
 fi
 
@@ -73,13 +61,5 @@ DIST_DIR=$BASEDIR/dist
 
 # Clean dist folder
 rm -rf $DIST_DIR
-mkdir -p $DIST_DIR/lib
-mkdir -p $DIST_DIR/conf
-mkdir -p $DIST_DIR/bin
-
-cp -r $BASEDIR/zoo/target/*.jar $DIST_DIR/lib/
-cp -r $BASEDIR/zoo/target/*.zip $DIST_DIR/lib/
-cp -r $BASEDIR/scripts/* $DIST_DIR/bin/
-cp $BASEDIR/backend/bigdl/spark/dl/src/main/resources/spark-bigdl.conf  $DIST_DIR/conf/
-
+cp -r $BASEDIR/zoo/target/analytics-zoo-*-dist-all $DIST_DIR
 

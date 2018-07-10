@@ -18,27 +18,35 @@ package com.intel.analytics.zoo.pipeline.api.keras.models
 
 import com.intel.analytics.bigdl.dataset._
 import com.intel.analytics.bigdl.{Criterion, DataSet}
-import com.intel.analytics.bigdl.nn.Graph.ModuleNode
+import com.intel.analytics.bigdl.nn.Graph._
 import com.intel.analytics.bigdl.nn.abstractnn.{AbstractModule, Activity}
 import com.intel.analytics.bigdl.nn.keras.{KerasLayer, KerasLayerSerializable}
 import com.intel.analytics.bigdl.nn.{Container, Graph, StaticGraph, Sequential => TSequential}
 import com.intel.analytics.bigdl.optim._
 import com.intel.analytics.bigdl.serialization.Bigdl.BigDLModule
 import com.intel.analytics.bigdl.tensor.TensorNumericMath.TensorNumeric
-import com.intel.analytics.bigdl.utils.{LoggerFilter, Shape}
+import com.intel.analytics.bigdl.transform.vision.image.ImageFeatureToMiniBatch
+import com.intel.analytics.bigdl.utils.{Edge, LoggerFilter, Node, Shape}
 import com.intel.analytics.bigdl.utils.serializer.{DeserializeContext, ModuleData, ModuleSerializer, SerializeContext}
 import com.intel.analytics.bigdl.visualization.{TrainSummary, ValidationSummary}
+import com.intel.analytics.zoo.feature.image.ImageSet
+import com.intel.analytics.zoo.pipeline.api.Net
+import com.intel.analytics.zoo.pipeline.api.autograd.{Lambda, Variable}
+import com.intel.analytics.zoo.pipeline.api.autograd._
+import com.intel.analytics.zoo.pipeline.api.keras.layers.Input
 import com.intel.analytics.zoo.pipeline.api.keras.layers.utils.{AbstractModuleRef, GraphRef, KerasLayerRef}
 import com.intel.analytics.zoo.pipeline.api.keras.layers.utils.KerasUtils
+import com.intel.analytics.zoo.pipeline.api.net.NetUtils
 import org.apache.spark.rdd.RDD
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.ClassTag
+import scala.language.implicitConversions
 
 
 abstract class KerasNet[T: ClassTag](implicit ev: TensorNumeric[T])
-  extends KerasLayer[Activity, Activity, T] {
+  extends KerasLayer[Activity, Activity, T] with Net {
 
   def getSubModules(): List[AbstractModule[Activity, Activity, T]] = {
     require(this.labor.isInstanceOf[Container[Activity, Activity, T]],
@@ -53,6 +61,8 @@ abstract class KerasNet[T: ClassTag](implicit ev: TensorNumeric[T])
   private var tensorBoardAppName: String = null
   private var checkpointPath: String = null
   private var overWriteCheckPoint: Boolean = true
+  private var constantGradientClippingParams: (Float, Float) = null
+  private var clipNorm: Option[Float] = None
 
   /**
    * Configure the learning process. It MUST be called before fit or evaluate.
@@ -86,6 +96,27 @@ abstract class KerasNet[T: ClassTag](implicit ev: TensorNumeric[T])
       KerasUtils.toBigDLMetrics[T](metrics))
   }
 
+  def compile(
+      optimizer: String,
+      loss: String)(implicit ev: TensorNumeric[T]): Unit = {
+    this.compile(optimizer, loss, null)
+  }
+
+  def compile(
+      optimizer: OptimMethod[T],
+      loss: (Variable[T], Variable[T]) => Variable[T],
+      metrics: List[ValidationMethod[T]])(implicit ev: TensorNumeric[T]): Unit = {
+    LoggerFilter.redirectSparkInfoLogs()
+    val customLoss = CustomLoss[T](loss, KerasUtils.removeBatch(this.getOutputShape()))
+    this.compile(optimizer, customLoss, metrics)
+  }
+
+  def compile(
+      optimizer: OptimMethod[T],
+      loss: (Variable[T], Variable[T]) => Variable[T])(implicit ev: TensorNumeric[T]): Unit = {
+    this.compile(optimizer, loss, null)
+  }
+
   /**
    * Set summary information during the training process for visualization purposes.
    * Saved summary can be viewed via TensorBoard.
@@ -116,8 +147,49 @@ abstract class KerasNet[T: ClassTag](implicit ev: TensorNumeric[T])
     this.overWriteCheckPoint = overWrite
   }
 
+  /**
+   * Clear gradient clipping parameters. In this case, gradient clipping will not be applied.
+   * In order to take effect, it needs to be called before fit.
+   */
+  def clearGradientClipping(): Unit = {
+    this.constantGradientClippingParams = null
+    this.clipNorm = None
+  }
+
+  /**
+   * Set constant gradient clipping during the training process.
+   * In order to take effect, it needs to be called before fit.
+   *
+   * @param min The minimum value to clip by. Double.
+   * @param max The maximum value to clip by. Double.
+   */
+  def setConstantGradientClipping(min: Float, max: Float): Unit = {
+    this.constantGradientClippingParams = (min, max)
+  }
+
+  /**
+   * Clip gradient to a maximum L2-Norm during the training process.
+   * In order to take effect, it needs to be called before fit.
+   *
+   * @param clipNorm Gradient L2-Norm threshold. Double.
+   */
+  def setGradientClippingByL2Norm(clipNorm: Float): Unit = {
+    this.clipNorm = Some(clipNorm)
+  }
+
+  /**
+   * Convert RDD of Sample to DataSet of MiniBatch.
+   */
   private def toDataSet(x: RDD[Sample[T]], batchSize: Int): DataSet[MiniBatch[T]] = {
     if (x != null) DataSet.rdd(x) -> SampleToMiniBatch[T](batchSize)
+    else null
+  }
+
+  /**
+   * Convert ImageSet to DataSet of MiniBatch.
+   */
+  private def toDataSet(x: ImageSet, batchSize: Int): DataSet[MiniBatch[T]] = {
+    if (x != null) x.toDataSet() -> ImageFeatureToMiniBatch[T](batchSize)
     else null
   }
 
@@ -147,6 +219,13 @@ abstract class KerasNet[T: ClassTag](implicit ev: TensorNumeric[T])
     if (this.tensorBoardLogDir != null && this.tensorBoardAppName != null) {
       optimizer.setTrainSummary(TrainSummary(tensorBoardLogDir, tensorBoardAppName))
     }
+    if (this.constantGradientClippingParams != null) {
+      optimizer.setConstantGradientClipping(this.constantGradientClippingParams._1,
+        this.constantGradientClippingParams._2)
+    }
+    if (this.clipNorm.isDefined) {
+      optimizer.setGradientClippingByl2Norm(this.clipNorm.get)
+    }
     if (validationData != null) {
       require(this.vMethods != null, "Validation metrics haven't been set yet")
       if (this.tensorBoardLogDir != null && this.tensorBoardAppName != null) {
@@ -156,9 +235,15 @@ abstract class KerasNet[T: ClassTag](implicit ev: TensorNumeric[T])
         dataset = validationData,
         vMethods = this.vMethods)
     }
-    optimizer.setOptimMethod(this.optimMethod)
+    optimizer.setOptimMethod(this.optimMethod.clone())
       .setEndWhen(Trigger.maxEpoch(nbEpoch))
     optimizer.optimize()
+  }
+
+  def fit[D: ClassTag](
+      x: DataSet[D],
+      nbEpoch: Int)(implicit ev: TensorNumeric[T]): Unit = {
+    this.fit(x, nbEpoch, null)
   }
 
   /**
@@ -175,6 +260,21 @@ abstract class KerasNet[T: ClassTag](implicit ev: TensorNumeric[T])
       nbEpoch: Int = 10,
       validationData: RDD[Sample[T]] = null)(implicit ev: TensorNumeric[T]): Unit = {
     this.fit(toDataSet(x, batchSize), nbEpoch, toDataSet(validationData, batchSize))
+  }
+
+  def fit(
+      x: ImageSet,
+      batchSize: Int,
+      nbEpoch: Int,
+      validationData: ImageSet)(implicit ev: TensorNumeric[T]): Unit = {
+    this.fit(toDataSet(x, batchSize), nbEpoch, toDataSet(validationData, batchSize))
+  }
+
+  def fit(
+      x: ImageSet,
+      batchSize: Int,
+      nbEpoch: Int)(implicit ev: TensorNumeric[T]): Unit = {
+    this.fit(toDataSet(x, batchSize), nbEpoch, null)
   }
 
   /**
@@ -219,15 +319,61 @@ abstract class KerasNet[T: ClassTag](implicit ev: TensorNumeric[T])
    *
    * @param x Prediction data, LocalDataSet.
    */
-  def predict(x: LocalDataSet[MiniBatch[T]])(implicit ev: TensorNumeric[T]): Array[Activity] = {
-    val localPredictor = LocalPredictor(this)
+  def predict(
+      x: LocalDataSet[MiniBatch[T]],
+      batchSize: Int)(implicit ev: TensorNumeric[T]): Array[Activity] = {
+    val localPredictor = LocalPredictor(this, batchPerCore = KerasUtils.calBatchPerCore(batchSize))
     localPredictor.predict(x)
   }
+
+  /**
+   * Use a model to predict for classes. By default, label predictions start from 0.
+   *
+   * @param x Prediction data, RDD of Sample.
+   * @param batchSize Number of samples per batch. Default is 32.
+   * @param zeroBasedLabel Boolean. Whether result labels start from 0.
+   *                       Default is true. If false, result labels start from 1.
+   */
+  def predictClasses(
+      x: RDD[Sample[T]],
+      batchSize: Int = 32,
+      zeroBasedLabel: Boolean = true): RDD[Int] = {
+    KerasUtils.toZeroBasedLabel(zeroBasedLabel, super.predictClass(x, batchSize))
+  }
+
+  def toModel(): Model[T]
+
+  /**
+   * Print out the summary information of an Analytics Zoo Keras Model.
+   *
+   * For each layer in the model, there will be a separate row containing four columns:
+   * ________________________________________________________________________________
+   * Layer (type)          Output Shape          Param #     Connected to
+   * ================================================================================
+   *
+   * In addition, total number of parameters of this model, separated into trainable and
+   * non-trainable counts, will be printed out after the table.
+   *
+   * @param lineLength The total length of one row. Default is 120.
+   * @param positions The maximum absolute length proportion(%) of each field.
+   *                  Array of Double of length 4.
+   *                  Usually you don't need to adjust this parameter.
+   *                  Default is Array(.33, .55, .67, 1), meaning that
+   *                  the first field will occupy up to 33% of lineLength,
+   *                  the second field will occupy up to (55-33)% of lineLength,
+   *                  the third field will occupy up to (67-55)% of lineLength,
+   *                  the fourth field will occupy the remaining line (100-67)%.
+   *                  If the field has a larger length, the remaining part will be trimmed.
+   *                  If the field has a smaller length, the remaining part will be white spaces.
+   */
+  def summary(
+      lineLength: Int = 120,
+      positions: Array[Double] = Array(.33, .55, .67, 1)): Unit
 }
 
 class Model[T: ClassTag] private (private val _inputs : Seq[ModuleNode[T]],
     private val _outputs : Seq[ModuleNode[T]])(implicit ev: TensorNumeric[T])
-  extends KerasNet[T] {
+  extends KerasNet[T] with NetUtils[T, Model[T]] {
   this.labor = doBuild(null)
   KerasLayerRef(this).excludeInvalidLayers(this.labor.asInstanceOf[StaticGraph[T]].
     getForwardExecutions().map {_.element})
@@ -263,9 +409,57 @@ class Model[T: ClassTag] private (private val _inputs : Seq[ModuleNode[T]],
     this.labor.asInstanceOf[Graph[T]].saveGraphTopology(logPath, backward)
     this
   }
+
+  override def unFreeze(names: String*): Model.this.type = {
+    labor.unFreeze(names: _*)
+    this
+  }
+
+  private val graph = labor.asInstanceOf[Graph[T]]
+
+  override def nodes(names: Seq[String]): Seq[ModuleNode[T]] = {
+    names.map(graph.node)
+  }
+
+  override def node(name: String): ModuleNode[T] = {
+    graph.node(name)
+  }
+
+  override def newGraph(output: String): Model[T] = {
+    new Model[T](_inputs, nodes(Seq(output)).map(_.removeNextEdges()))
+  }
+
+  override def newGraph(outputs: Seq[String]): Model[T] = {
+    new Model[T](_inputs, nodes(outputs).map(_.removeNextEdges()))
+  }
+
+  override def toModel(): Model[T] = this
+
+  override def toKeras(): Model[T] = this
+
+  override def summary(
+      lineLength: Int = 120,
+      positions: Array[Double] = Array(.33, .55, .67, 1)): Unit = {
+    println("Model Summary:")
+    KerasUtils.printSplitLine('-', lineLength)
+    val toDisplay = Array("Layer (type)", "Output Shape", "Param #", "Connected to")
+    KerasUtils.printRow(toDisplay, lineLength, positions, splitChar = '=')
+    val nodes = labor.asInstanceOf[StaticGraph[T]].getSortedForwardExecutions()
+    var totalParams = 0
+    var trainableParams = 0
+    for (node <- nodes) {
+      val (total, trainable) = KerasUtils.printNodeSummary(node, lineLength, positions)
+      totalParams += total
+      trainableParams += trainable
+    }
+    println("Total params: " + "%,d".format(totalParams))
+    println("Trainable params: " + "%,d".format(trainableParams))
+    println("Non-trainable params: " + "%,d".format(totalParams - trainableParams))
+    KerasUtils.printSplitLine('-', lineLength)
+  }
 }
 
-object Model extends KerasLayerSerializable{
+object Model extends KerasLayerSerializable {
   ModuleSerializer.registerModule(
     "com.intel.analytics.zoo.pipeline.api.keras.models.Model",
     Model)
@@ -314,6 +508,51 @@ object Model extends KerasLayerSerializable{
     new Model[T](Seq(input), Seq(output))
   }
 
+   /* ------------------------ factory methods for variables--------------------- */
+  /**
+   * Build a multiple-input, multiple-output graph container.
+   * @param input Array of input variables.
+   * @param output Array of output variables.
+   * @return A graph container.
+   */
+  def apply[T: ClassTag](
+      input : Array[Variable[T]],
+      output : Array[Variable[T]])(implicit ev: TensorNumeric[T]) : Model[T] = {
+    new Model[T](input.map(_.node), output.map(_.node))
+  }
+
+  /**
+   * Build a single-input, multiple-output graph container
+   * @param input The input variable.
+   * @param output Array of output variables.
+   * @return A graph container.
+   */
+  def apply[T: ClassTag](input : Variable[T], output : Array[Variable[T]])
+    (implicit ev: TensorNumeric[T]) : Model[T] = {
+    new Model[T](Seq(input.node), output.map(_.node))
+  }
+
+  /**
+   * Build a multiple-input, single-output graph container.
+   * @param input Array of input variables.
+   * @param output The output variables.
+   * @return A graph container.
+   */
+  def apply[T: ClassTag](input : Array[Variable[T]], output : Variable[T])
+    (implicit ev: TensorNumeric[T]) : Model[T] = {
+    new Model[T](input.map(_.node), Seq(output.node))
+  }
+  /**
+   * Build a single-input, single-output graph container
+   * @param input The input variable.
+   * @param output The output variable.
+   * @return A graph container.
+   */
+  def apply[T: ClassTag](input : Variable[T], output : Variable[T])
+    (implicit ev: TensorNumeric[T]) : Model[T] = {
+    new Model[T](Seq(input.node), Seq(output.node))
+  }
+
   override def doSerializeModule[T: ClassTag](context: SerializeContext[T],
       builder: BigDLModule.Builder)
     (implicit ev: TensorNumeric[T]): Unit = {
@@ -346,7 +585,7 @@ class Sequential[T: ClassTag] private ()
 
   this.labor = doBuild(null)
 
-  private def triggerBuilding(module: AbstractModule[_ <: Activity, _ <: Activity, T]): Unit = {
+  private def buildModule(module: AbstractModule[_ <: Activity, _ <: Activity, T]): Unit = {
     val absModuleRef =
       new AbstractModuleRef(module.asInstanceOf[AbstractModule[Activity, Activity, T]])
     val kerasLayerRef = KerasLayerRef(this)
@@ -367,6 +606,24 @@ class Sequential[T: ClassTag] private ()
     }
   }
 
+  private def getLambdaLayer(lambda: Lambda[T]):
+  AbstractModule[_ <: Activity, _ <: Activity, T] = {
+    val inputShape = if (!this.isBuilt()) {
+      if (lambda.getInputShape() == null) {
+        throw new RuntimeException("The first layer should explicitly declare inputshape")
+      }
+      lambda.getInputShape()
+    } else {
+      this.getOutputShape()
+    }
+    return lambda.create(
+      KerasUtils.removeBatch(inputShape))
+  }
+
+  def add(lambda: Lambda[T]): Sequential[T] = {
+    add(getLambdaLayer(lambda))
+  }
+
   /**
    * Add a sub-module to the sequential container.
    *
@@ -378,16 +635,18 @@ class Sequential[T: ClassTag] private ()
       throw new RuntimeException(
         "This Sequential has been frozen, as it has been added into other container")
     }
+
     if (module.isInstanceOf[Sequential[T]]) {
       module.asInstanceOf[Sequential[T]].frozen = true
     }
+    val mModule = module
     val kerasLayerRef = KerasLayerRef(this)
-    kerasLayerRef.validateInput[T](Seq(module))
+    kerasLayerRef.validateInput[T](Seq(mModule))
 
-    triggerBuilding(module)
+    buildModule(mModule)
 
     labor.asInstanceOf[TSequential[T]].modules +=
-      module.asInstanceOf[AbstractModule[Activity, Activity, T]]
+      mModule.asInstanceOf[AbstractModule[Activity, Activity, T]]
     kerasLayerRef.checkDuplicate()
     this
   }
@@ -407,9 +666,31 @@ class Sequential[T: ClassTag] private ()
     kerasLayerRef.checkWithCurrentInputShape(calcInputShape)
     getOutputShape()
   }
+
+  override def toModel(): Model[T] = {
+    val input = Input[T](KerasUtils.removeBatch(this.getInputShape()))
+
+    // the is reason we do not use .inputs here is
+    // layers in modules cannot be rebuilt
+    val output = this.modules(0)
+      .asInstanceOf[TSequential[T]]
+      .modules.foldLeft(input) { (i1, i2) =>
+      val out = Node(i2)
+      i1.add(out, Edge())
+      out
+    }
+    Model(input, output)
+  }
+
+  override def summary(
+      lineLength: Int = 120,
+      positions: Array[Double] = Array(.33, .55, .67, 1)): Unit = {
+    val graph = this.toModel()
+    graph.summary(lineLength, positions)
+  }
 }
 
-object Sequential extends KerasLayerSerializable{
+object Sequential extends KerasLayerSerializable {
   ModuleSerializer.registerModule(
     "com.intel.analytics.zoo.pipeline.api.keras.models.Sequential",
     Sequential)
@@ -419,4 +700,3 @@ object Sequential extends KerasLayerSerializable{
     new Sequential[T]()
   }
 }
-

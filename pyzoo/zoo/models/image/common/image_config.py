@@ -17,12 +17,13 @@
 import sys
 from bigdl.util.common import JavaValue
 from bigdl.util.common import callBigDlFunc
-from bigdl.util.common import *
-from bigdl.transform.vision.image import *
+
+from zoo.feature.common import Preprocessing
 
 if sys.version >= '3':
     long = int
     unicode = str
+
 
 class ImageConfigure(JavaValue):
     """
@@ -37,16 +38,16 @@ class ImageConfigure(JavaValue):
                  post_processor=None,
                  batch_per_partition=4,
                  label_map=None, feature_padding_param=None, jvalue=None, bigdl_type="float"):
-        self.bigdl_type=bigdl_type
+        self.bigdl_type = bigdl_type
         if jvalue:
             self.value = jvalue
         else:
             if pre_processor:
-                assert pre_processor.__class__.__bases__[0].__name__ == "FeatureTransformer", \
-                    "the pre_processor should be subclass of FeatureTransformer"
+                assert issubclass(pre_processor.__class__, Preprocessing), \
+                    "the pre_processor should be subclass of Preprocessing"
             if post_processor:
-                assert post_processor.__class__.__bases__[0].__name__ == "FeatureTransformer", \
-                    "the pre_processor should be subclass of FeatureTransformer"
+                assert issubclass(post_processor.__class__, Preprocessing), \
+                    "the pre_processor should be subclass of Preprocessing"
             self.value = callBigDlFunc(
                 bigdl_type, JavaValue.jvm_class_constructor(self),
                 pre_processor,
@@ -57,6 +58,7 @@ class ImageConfigure(JavaValue):
 
     def label_map(self):
         return callBigDlFunc(self.bigdl_type, "getLabelMap", self.value)
+
 
 class PaddingParam(JavaValue):
 

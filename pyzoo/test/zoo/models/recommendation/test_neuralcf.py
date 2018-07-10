@@ -31,6 +31,7 @@ class TestNeuralCF(ZooTestCase):
 
     def test_forward_backward_without_mf(self):
         model = NeuralCF(30, 12, 2, include_mf=False)
+        model.summary()
         input_data = np.random.randint(10, size=(10, 2))
         self.assert_forward_backward(model, input_data)
 
@@ -42,9 +43,8 @@ class TestNeuralCF(ZooTestCase):
     def test_save_load(self):
         model = NeuralCF(10000, 2000, 10)
         input_data = np.random.randint(1500, size=(300, 2))
-        self.assert_save_load(model, input_data)
+        self.assert_zoo_model_save_load(model, input_data)
 
-    @pytest.mark.skip(reason="window function not supported for Spark1.6")
     def test_predict_recommend(self):
 
         def gen_rand_user_item_feature(user_num, item_num, class_num):
@@ -55,7 +55,8 @@ class TestNeuralCF(ZooTestCase):
             return UserItemFeature(user_id, item_id, sample)
 
         model = NeuralCF(200, 80, 5)
-        data = self.sc.parallelize(range(0, 50)).map(lambda i: gen_rand_user_item_feature(200, 80, 5))
+        data = self.sc.parallelize(range(0, 50))\
+            .map(lambda i: gen_rand_user_item_feature(200, 80, 5))
         predictions = model.predict_user_item_pair(data).collect()
         print(predictions[0])
         recommended_items = model.recommend_for_user(data, max_items=3).collect()
@@ -65,4 +66,4 @@ class TestNeuralCF(ZooTestCase):
 
 
 if __name__ == "__main__":
-   pytest.main([__file__])
+    pytest.main([__file__])

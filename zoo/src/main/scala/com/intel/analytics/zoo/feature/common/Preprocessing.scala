@@ -16,6 +16,8 @@
 package com.intel.analytics.zoo.feature.common
 
 import com.intel.analytics.bigdl.dataset.Transformer
+import com.intel.analytics.bigdl.transform.vision.image.{FeatureTransformer, ImageFeature}
+import com.intel.analytics.zoo.feature.image.ImageSet
 import org.apache.commons.lang3.SerializationUtils
 
 /**
@@ -38,6 +40,15 @@ trait Preprocessing[A, B] extends Transformer[A, B] {
   def clonePreprocessing(): Preprocessing[A, B] = {
     SerializationUtils.clone(this)
   }
+
+  def apply(imageSet: ImageSet): ImageSet = {
+    if (this.isInstanceOf[Preprocessing[ImageFeature, ImageFeature]]) {
+      imageSet.transform(this.asInstanceOf[Preprocessing[ImageFeature, ImageFeature]])
+    } else {
+      throw new IllegalArgumentException("We expect " +
+        "Preprocessing[ImageFeature, ImageFeature] here")
+    }
+  }
 }
 
 /**
@@ -57,6 +68,5 @@ class ChainedPreprocessing[A, B, C](first: Preprocessing[A, B], last: Preprocess
     last(first(prev))
   }
 }
-
 
 

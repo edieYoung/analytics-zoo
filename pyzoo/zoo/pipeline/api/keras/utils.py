@@ -16,6 +16,7 @@
 
 from bigdl.optim.optimizer import *
 from bigdl.nn.criterion import *
+from zoo.pipeline.api.keras import objectives, metrics
 
 
 def to_bigdl_optim_method(optimizer):
@@ -45,7 +46,7 @@ def to_bigdl_criterion(criterion):
     elif criterion == "binary_crossentropy":
         return BCECriterion()
     elif criterion == "mae" or criterion == "mean_absolute_error":
-        return AbsCriterion()
+        return objectives.mae()
     elif criterion == "hinge":
         return MarginCriterion()
     elif criterion == "mean_absolute_percentage_error" or criterion == "mape":
@@ -55,7 +56,7 @@ def to_bigdl_criterion(criterion):
     elif criterion == "squared_hinge":
         return MarginCriterion(squared=True)
     elif criterion == "sparse_categorical_crossentropy":
-        return ClassNLLCriterion(logProbAsInput=False)
+        return objectives.SparseCategoricalCrossEntropy()
     elif criterion == "kullback_leibler_divergence" or criterion == "kld":
         return KullbackLeiblerDivergenceCriterion()
     elif criterion == "poisson":
@@ -66,12 +67,23 @@ def to_bigdl_criterion(criterion):
         raise TypeError("Unsupported loss: %s" % criterion)
 
 
+def to_bigdl_metric(metric):
+    metric = metric.lower()
+    if metric == "accuracy" or metric == "acc":
+        return metrics.Accuracy()
+    elif metric == "top5accuracy" or metric == "top5acc":
+        return metrics.Top5Accuracy()
+    elif metric == "mae":
+        return MAE()
+    elif metric == "auc":
+        return metrics.AUC()
+    elif metric == "loss":
+        return Loss()
+    elif metric == "treennaccuracy":
+        return TreeNNAccuracy()
+    else:
+        raise TypeError("Unsupported metric: %s" % metric)
+
+
 def to_bigdl_metrics(metrics):
-    metrics = to_list(metrics)
-    bmetrics = []
-    for metric in metrics:
-        if metric.lower() == "accuracy":
-            bmetrics.append(Top1Accuracy())
-        else:
-            raise TypeError("Unsupported metrics: %s" % metric)
-    return bmetrics
+    return [to_bigdl_metric(m) for m in metrics]

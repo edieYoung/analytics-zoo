@@ -17,27 +17,28 @@
 import argparse
 import cv2
 
-from zoo.common.nncontext import get_nncontext
-from zoo.feature.image.imageset import *
-from zoo.models.image.objectdetection.object_detector import *
+from zoo.common.nncontext import init_nncontext
+from zoo.models.image.objectdetection import *
 
-sc = get_nncontext(create_spark_conf().setAppName("Object Detection Example"))
+sc = init_nncontext(create_spark_conf().setAppName("Object Detection Example"))
 
 parser = argparse.ArgumentParser()
 parser.add_argument('model_path', help="Path where the model is stored")
 parser.add_argument('img_path', help="Path where the images are stored")
 parser.add_argument('output_path',  help="Path to store the detection results")
 
+
 def predict(model_path, img_path, output_path):
     model = ObjectDetector.load_model(model_path)
-    image_set = ImageSet.read(img_path, sc)
+    image_set = ImageSet.read(img_path, sc, image_codec=1)
     output = model.predict_image_set(image_set)
 
     config = model.get_config()
-    visualizer = Visualizer(config.label_map(), encoding = "jpg")
+    visualizer = Visualizer(config.label_map(), encoding="jpg")
     visualized = visualizer(output).get_image(to_chw=False).collect()
     for img_id in range(len(visualized)):
         cv2.imwrite(output_path + '/' + str(img_id) + '.jpg', visualized[img_id])
+
 
 if __name__ == "__main__":
     args = parser.parse_args()

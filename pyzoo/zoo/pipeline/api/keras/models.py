@@ -16,6 +16,7 @@
 
 import sys
 
+from zoo.pipeline.api.utils import remove_batch
 from .engine.topology import KerasNet
 from bigdl.util.common import to_list, callBigDlFunc
 
@@ -37,7 +38,24 @@ class Sequential(KerasNet):
     def __init__(self, jvalue=None, **kwargs):
         super(Sequential, self).__init__(jvalue, **kwargs)
 
+    # TODO: expose is_built from scala side
+    def is_built(self):
+        try:
+            self.get_output_shape()
+            return True
+        except:
+            return False
+
     def add(self, model):
+        from zoo.pipeline.api.autograd import Lambda
+        if (isinstance(model, Lambda)):
+            if not self.is_built():
+                if not model.input_shape:
+                    raise Exception("You should specify inputShape for the first layer")
+                input_shapes = model.input_shape
+            else:
+                input_shapes = self.get_output_shape()
+            model = model.create(remove_batch(input_shapes))
         self.value.add(model.value)
         return self
 
@@ -70,7 +88,8 @@ class Model(KerasNet):
 
     def save_graph_topology(self, log_path, backward=False):
         """
-        Save the current model graph to a folder, which can be displayed in TensorBoard by running the command:
+        Save the current model graph to a folder, which can be displayed in TensorBoard
+        by running the command:
         tensorboard --logdir log_path
 
         # Arguments
@@ -81,6 +100,16 @@ class Model(KerasNet):
                       self.value,
                       log_path,
                       backward)
+
+    def new_graph(self, outputs):
+        value = callBigDlFunc(self.bigdl_type, "newGraph", self.value, outputs)
+        return self.from_jvalue(value)
+
+    def freeze_up_to(self, names):
+        callBigDlFunc(self.bigdl_type, "freezeUpTo", self.value, names)
+
+    def unfreeze(self, names):
+        callBigDlFunc(self.bigdl_type, "unFreeze", self.value, names)
 
     @staticmethod
     def from_jvalue(jvalue, bigdl_type="float"):
